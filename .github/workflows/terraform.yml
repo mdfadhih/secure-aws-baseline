@@ -85,12 +85,6 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: false
 
-      - name: DEBUG show OIDC claims (temporary)
-        run: |
-          curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" \
-          | python3 -c "import sys,json,base64; t=json.load(sys.stdin)['value'].split('.')[1]; t+='='*(-len(t)%4); d=json.loads(base64.urlsafe_b64decode(t)); print({k:d.get(k) for k in ['sub','aud','repository','ref','environment']})"
-
       - name: Assume the read-only plan role through OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:

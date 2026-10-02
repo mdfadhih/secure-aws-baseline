@@ -10,6 +10,16 @@ locals {
   baseline_bucket = "${var.baseline_name_prefix}-cloudtrail-logs-${local.account_id}"
   oidc_host       = "token.actions.githubusercontent.com"
   oidc_arn        = var.create_oidc_provider ? aws_iam_openid_connect_provider.github[0].arn : data.aws_iam_openid_connect_provider.existing[0].arn
+
+  # GitHub's newer repositories put immutable numeric IDs in the OIDC subject:
+  #   repo:OWNER@OWNER_ID/NAME@REPO_ID:ref:refs/heads/main
+  # Older repositories use repo:OWNER/NAME:... . With both IDs set we trust the ID form, which also
+  # survives a rename and cannot be claimed by someone who later registers the old name.
+  sub_repo = (
+    var.github_owner_id != "" && var.github_repo_id != ""
+    ? "${split("/", var.github_repo)[0]}@${var.github_owner_id}/${split("/", var.github_repo)[1]}@${var.github_repo_id}"
+    : var.github_repo
+  )
 }
 
 # ---------------------------------------------------------------------------
@@ -148,8 +158,8 @@ data "aws_iam_policy_document" "plan_trust" {
       test     = "StringEquals"
       variable = "${local.oidc_host}:sub"
       values = [
-        "repo:${var.github_repo}:pull_request",
-        "repo:${var.github_repo}:ref:refs/heads/main",
+        "repo:${local.sub_repo}:pull_request",
+        "repo:${local.sub_repo}:ref:refs/heads/main",
       ]
     }
   }
@@ -219,7 +229,7 @@ data "aws_iam_policy_document" "apply_trust" {
     condition {
       test     = "StringEquals"
       variable = "${local.oidc_host}:sub"
-      values   = ["repo:${var.github_repo}:environment:${var.github_environment}"]
+      values   = ["repo:${local.sub_repo}:environment:${var.github_environment}"]
     }
   }
 }

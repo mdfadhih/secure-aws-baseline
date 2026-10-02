@@ -14,6 +14,28 @@ variable "github_repo" {
   }
 }
 
+variable "github_owner_id" {
+  description = "Numeric ID of the GitHub owner. Needed when your repository's OIDC subject uses the OWNER@ID/NAME@ID form. See the README for how to read it from a workflow run."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = can(regex("^[0-9]*$", var.github_owner_id))
+    error_message = "github_owner_id must be digits only."
+  }
+}
+
+variable "github_repo_id" {
+  description = "Numeric ID of the GitHub repository (pair with github_owner_id)."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = can(regex("^[0-9]*$", var.github_repo_id))
+    error_message = "github_repo_id must be digits only."
+  }
+}
+
 variable "github_environment" {
   description = "GitHub Environment that must approve applies. The apply role can only be assumed by jobs running in this environment."
   type        = string
