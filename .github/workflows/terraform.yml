@@ -149,7 +149,7 @@ jobs:
           role-session-name: gha-apply-${{ github.run_id }}
 
       - name: Download the reviewed plan
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: tfplan
           path: infra
