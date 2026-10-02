@@ -6,15 +6,15 @@ A small, security-first AWS environment defined entirely in Terraform and deploy
 
 ## What gets deployed
 
-| Resource | Purpose |
-| --- | --- |
-| KMS key (rotation on) | Encrypts CloudTrail logs; key policy lets only CloudTrail encrypt, constrained to this trail |
-| S3 log bucket | Private, versioned, KMS-encrypted, TLS-only, logs expire after a set retention |
-| CloudTrail trail | All regions, global service events, log file validation (tamper evidence) |
-| GuardDuty detector | Managed threat detection, findings every 15 minutes |
-| IAM Access Analyzer | Flags resources shared outside the account |
-| `baseline-log-reader` role | Read-only access to the logs and key, MFA required |
-| Optional: account-wide S3 Block Public Access | Off by default; enable in a dedicated lab account |
+| Resource                                      | Purpose                                                                                      |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| KMS key (rotation on)                         | Encrypts CloudTrail logs; key policy lets only CloudTrail encrypt, constrained to this trail |
+| S3 log bucket                                 | Private, versioned, KMS-encrypted, TLS-only, logs expire after a set retention               |
+| CloudTrail trail                              | All regions, global service events, log file validation (tamper evidence)                    |
+| GuardDuty detector                            | Managed threat detection, findings every 15 minutes                                          |
+| IAM Access Analyzer                           | Flags resources shared outside the account                                                   |
+| `baseline-log-reader` role                    | Read-only access to the logs and key, MFA required                                           |
+| Optional: account-wide S3 Block Public Access | Off by default; enable in a dedicated lab account                                            |
 
 ## How it fits together
 
@@ -30,40 +30,60 @@ flowchart LR
 
 ## Repository layout
 
-| Path | What it is |
-| --- | --- |
-| `bootstrap/` | Run once from a laptop. Creates the remote state bucket, the GitHub OIDC provider and the two pipeline roles. |
-| `infra/` | The baseline itself. Only the pipeline deploys this. |
-| `.github/workflows/terraform.yml` | Validate and scan, plan, approve, apply. |
-| `.github/workflows/destroy.yml` | Manual, approval-gated teardown. |
+| Path                              | What it is                                                                                                    |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `bootstrap/`                      | Run once from a laptop. Creates the remote state bucket, the GitHub OIDC provider and the two pipeline roles. |
+| `infra/`                          | The baseline itself. Only the pipeline deploys this.                                                          |
+| `.github/workflows/terraform.yml` | Validate and scan, plan, approve, apply.                                                                      |
+| `.github/workflows/destroy.yml`   | Manual, approval-gated teardown.                                                                              |
 
 ## Security decisions
 
-| Decision | Why |
-| --- | --- |
-| **OIDC instead of access keys** | Jobs get short-lived credentials. There is no long-lived secret to leak or rotate. |
-| **Two roles, split by risk** | Plan uses a read-only role and can run on pull requests. Apply uses a separate scoped role that only a job in the `production` environment can assume. |
-| **Apply role cannot edit itself** | It may only manage IAM roles named `baseline-*`; the pipeline roles are named `gha-tf-*`, so there is no path to escalate its own privileges. |
-| **Apply the reviewed plan** | The plan saved from the main-branch run is what gets applied, so what was reviewed is what runs. |
-| **Scan before plan** | Checkov runs first. A failing scan stops the pipeline before AWS is touched. |
-| **State is private and locked** | Versioned, encrypted, TLS-only S3 bucket with native S3 locking (no DynamoDB table needed). |
-| **Provider versions pinned** | The lock file is committed and checked in CI so plan and apply use identical providers. |
-| **MFA on the log-reader role** | The role can be assumed only by principals that signed in with MFA. |
+| Decision                          | Why                                                                                                                                                    |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **OIDC instead of access keys**   | Jobs get short-lived credentials. There is no long-lived secret to leak or rotate.                                                                     |
+| **Two roles, split by risk**      | Plan uses a read-only role and can run on pull requests. Apply uses a separate scoped role that only a job in the `production` environment can assume. |
+| **Apply role cannot edit itself** | It may only manage IAM roles named `baseline-*`; the pipeline roles are named `gha-tf-*`, so there is no path to escalate its own privileges.          |
+| **Apply the reviewed plan**       | The plan saved from the main-branch run is what gets applied, so what was reviewed is what runs.                                                       |
+| **Scan before plan**              | Checkov runs first. A failing scan stops the pipeline before AWS is touched.                                                                           |
+| **State is private and locked**   | Versioned, encrypted, TLS-only S3 bucket with native S3 locking (no DynamoDB table needed).                                                            |
+| **Provider versions pinned**      | The lock file is committed and checked in CI so plan and apply use identical providers.                                                                |
+| **MFA on the log-reader role**    | The role can be assumed only by principals that signed in with MFA.                                                                                    |
 
 ## Accepted risks and documented exceptions
 
 Checkov reports no unexcepted findings. Each exception sits next to the resource in the code with its reason. They are listed here so the trade-offs are visible, not hidden.
 
-| Exception | Where | Reason | Next step |
-| --- | --- | --- | --- |
-| IAM write and `*` resource checks | Apply role policy | Create-type actions for CloudTrail, GuardDuty, Access Analyzer and KMS have no ARN to name beforehand | Add a permissions boundary; tighten using Access Analyzer policy generation |
-| IAM permission-management check | Apply role policy | Scoped to `baseline-*` roles, which Checkov cannot evaluate | Permissions boundary on created roles |
-| KMS key policy checks | CloudTrail key | A key policy must let the account root delegate to IAM, and `*` there means the key itself | None; this is the standard pattern |
-| S3 access logging, replication, event notifications | Log and state buckets | Would need extra buckets or regions for a single-account lab | Ship logs to a separate logging account |
-| CloudTrail to CloudWatch Logs, SNS | Trail | Alerting is the next milestone | Metric filters and alarms for root use and policy changes |
-| GuardDuty organisation and multi-region | Detector | Needs AWS Organizations | Enable in every region via Organizations |
+| Exception                                           | Where                 | Reason                                                                                                | Next step                                                                   |
+| --------------------------------------------------- | --------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| IAM write and `*` resource checks                   | Apply role policy     | Create-type actions for CloudTrail, GuardDuty, Access Analyzer and KMS have no ARN to name beforehand | Add a permissions boundary; tighten using Access Analyzer policy generation |
+| IAM permission-management check                     | Apply role policy     | Scoped to `baseline-*` roles, which Checkov cannot evaluate                                           | Permissions boundary on created roles                                       |
+| KMS key policy checks                               | CloudTrail key        | A key policy must let the account root delegate to IAM, and `*` there means the key itself            | None; this is the standard pattern                                          |
+| S3 access logging, replication, event notifications | Log and state buckets | Would need extra buckets or regions for a single-account lab                                          | Ship logs to a separate logging account                                     |
+| CloudTrail to CloudWatch Logs, SNS                  | Trail                 | Alerting is the next milestone                                                                        | Metric filters and alarms for root use and policy changes                   |
+| GuardDuty organisation and multi-region             | Detector              | Needs AWS Organizations                                                                               | Enable in every region via Organizations                                    |
 
 Known gaps: the read-only plan role uses the AWS-managed `ReadOnlyAccess` policy, which can read objects in any bucket in the account. That is acceptable in a dedicated lab account, but a production setup should use a narrower policy.
+
+## Evidence
+
+Deployed to a real AWS account (ap-southeast-2) and torn down afterwards.
+
+**Pipeline: validate, scan, plan, manual approval, apply**
+![Green pipeline run](docs/01-pipeline-green.png)
+
+**Checkov blocks an insecure change before anything is planned**
+A pull request adding a public-access-disabled-off S3 bucket fails the scan. The plan job is skipped, so nothing reaches AWS.
+![Failed Checkov scan](docs/02-checkov-blocks-insecure-pr.png)
+![Failed Checkov scan](docs/02b-checkov-detail.png)
+
+**CloudTrail logs delivered to the encrypted bucket**
+![CloudTrail log files](docs/03-cloudtrail-logs.png)
+
+**MFA enforced on the log-reader role**
+Assuming the role without MFA is refused.
+![MFA denied](docs/04-mfa-denied.png)
+![MFA denied](docs/04_01_mfa-denied.png)
 
 ## Deploy it yourself
 
