@@ -1,0 +1,163 @@
+name: terraform
+
+# Pull request:  validate (fmt, validate, Checkov) -> plan with the READ-ONLY role.
+# Merge to main: validate -> plan -> manual approval -> apply the SAME saved plan with the SCOPED role.
+# No AWS access keys are stored in GitHub: jobs authenticate with short-lived OIDC tokens.
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - "bootstrap/**"
+      - ".github/workflows/**"
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - "bootstrap/**"
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TF_VERSION: "~> 1.11"
+
+jobs:
+  validate:
+    name: Format, validate and security scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Provider lock file must be committed
+        run: |
+          test -f infra/.terraform.lock.hcl || {
+            echo "::error::Commit infra/.terraform.lock.hcl so plan and apply use identical provider versions."
+            exit 1
+          }
+
+      - name: Format check
+        run: terraform fmt -check -recursive -diff
+
+      - name: Init and validate (no backend, no credentials)
+        run: |
+          for dir in bootstrap infra; do
+            terraform -chdir="$dir" init -backend=false
+            terraform -chdir="$dir" validate
+          done
+
+      - name: Checkov (fails the build on any unexcepted finding)
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          framework: terraform
+          quiet: true
+          soft_fail: false
+
+  plan:
+    name: Plan (read-only role)
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Assume the read-only plan role through OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: gha-plan-${{ github.run_id }}
+
+      - name: Init
+        working-directory: infra
+        run: terraform init -backend-config="bucket=${TF_STATE_BUCKET}" -backend-config="region=${AWS_REGION}"
+
+      - name: Plan
+        working-directory: infra
+        run: terraform plan -no-color -out=tfplan -var="region=${AWS_REGION}"
+
+      - name: Show the plan in the run summary
+        working-directory: infra
+        run: |
+          {
+            echo "### Terraform plan"
+            echo '```'
+            terraform show -no-color tfplan
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save the plan for the apply job (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: infra/tfplan
+          retention-days: 7
+          if-no-files-found: error
+
+  apply:
+    name: Apply (manual approval, scoped role)
+    needs: plan
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # The environment name is part of the OIDC subject the apply role trusts.
+    # Add required reviewers to this environment in the GitHub repo settings.
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Assume the scoped apply role through OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_APPLY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: gha-apply-${{ github.run_id }}
+
+      - name: Download the reviewed plan
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan
+          path: infra
+
+      - name: Init
+        working-directory: infra
+        run: terraform init -backend-config="bucket=${TF_STATE_BUCKET}" -backend-config="region=${AWS_REGION}"
+
+      - name: Apply the saved plan
+        working-directory: infra
+        run: terraform apply -no-color tfplan

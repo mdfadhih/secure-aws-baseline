@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars (git-ignored) and edit.
+github_repo = "YOUR-GITHUB-USERNAME/secure-aws-baseline"
+region      = "ap-southeast-2"
+
+# Set to false if this AWS account already has the GitHub OIDC provider.
+create_oidc_provider = true

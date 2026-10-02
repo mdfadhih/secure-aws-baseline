@@ -1,0 +1,22 @@
+# Terraform working files and state (state lives in the S3 bucket, never in Git)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+
+# Local settings and anything that could hold credentials
+bootstrap/terraform.tfvars
+.env
+*.pem
+.aws/
+
+# Editor and OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
